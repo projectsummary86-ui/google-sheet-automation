@@ -4,14 +4,14 @@ import random
 import pandas as pd
 import gspread
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from gspread.exceptions import APIError
 
 
 # -------- CREATE CREDENTIAL FILE --------
-with open("credentials.json", "w") as f:
+with open("credentials.json","w") as f:
     f.write(os.environ["GOOGLE_CREDENTIALS"])
 
 
@@ -42,118 +42,127 @@ excluded_sheets = {
 
 
 # -------- SAFE API CALL --------
-def safe_api_call(func, retries=5):
+def safe_call(func,retries=5):
 
     for i in range(retries):
 
         try:
             return func()
 
-        except APIError as e:
+        except APIError:
 
-            print("API retry:", i+1)
+            print("Quota hit... waiting")
 
-            time.sleep(4 + random.random())
+            time.sleep(8 + random.random())
 
         except Exception as e:
 
-            print("Error:", e)
+            print("Error:",e)
 
-            time.sleep(2)
+            time.sleep(4)
 
     return None
 
 
 # -------- GET SPREADSHEETS --------
-query = f"'{folder_id}' in parents and mimeType='application/vnd.google-apps.spreadsheet' and trashed=false"
+query = f"'{folder_id}' in parents and mimeType='application/vnd.google-apps.spreadsheet'"
 
 response = drive_service.files().list(
 q=query,
 fields="files(id,name)"
 ).execute()
 
-files = response.get("files", [])
+files = response.get("files",[])
 
-print("Total spreadsheets:", len(files))
+print("Total Sheets Found:",len(files))
 
 
-# -------- PROCESS ONE FILE --------
+# -------- PROCESS FILE --------
 def process_file(file):
 
-    frames = []
+    frames=[]
 
-    print("Processing:", file["name"])
+    print("Reading:",file["name"])
 
-    spreadsheet = safe_api_call(
+    spreadsheet = safe_call(
         lambda: gc.open_by_key(file["id"])
     )
 
     if spreadsheet is None:
         return frames
 
+
     worksheets = spreadsheet.worksheets()
+
 
     for ws in worksheets:
 
         if ws.title in excluded_sheets:
             continue
 
-        data = safe_api_call(
+
+        data = safe_call(
             lambda: ws.get_all_values()
         )
 
-        if not data or len(data) < 4:
+
+        if not data or len(data)<4:
             continue
+
 
         try:
 
-            df = pd.DataFrame(data[3:], columns=data[0])
+            df = pd.DataFrame(data[3:],columns=data[0])
 
             # remove duplicate columns
-            df = df.loc[:, ~df.columns.duplicated()]
+            df = df.loc[:,~df.columns.duplicated()]
 
-            # skip if Status missing
+            # ensure Status column exists
             if "Status" not in df.columns:
                 continue
+
 
             frames.append(df)
 
         except Exception as e:
 
-            print("Sheet error:", ws.title)
+            print("Sheet error:",ws.title)
 
-        time.sleep(0.3)
+
+        time.sleep(1)
+
 
     return frames
 
 
-# -------- PARALLEL PROCESS --------
-all_data = []
+# -------- RUN SEQUENTIAL (Quota Safe) --------
+all_data=[]
 
-with ThreadPoolExecutor(max_workers=2) as executor:
+with ThreadPoolExecutor(max_workers=1) as executor:
 
-    futures = [executor.submit(process_file,f) for f in files]
+    results = executor.map(process_file,files)
 
-    for future in as_completed(futures):
+    for r in results:
 
-        result = future.result()
-
-        if result:
-            all_data.extend(result)
+        if r:
+            all_data.extend(r)
 
 
-# -------- MERGE DATA --------
-if not all_data:
+# -------- SAFE CONCAT --------
+frames = [f for f in all_data if not f.empty]
+
+if not frames:
 
     print("No data found")
     exit()
 
 
-final_df = pd.concat(all_data,ignore_index=True)
+final_df = pd.concat(frames,ignore_index=True)
+
 
 final_df = final_df[
-    final_df["Status"].notna() &
-    (final_df["Status"] != "")
+final_df["Status"].notna() &
+(final_df["Status"]!="")
 ]
 
 
@@ -169,25 +178,22 @@ def update_tab(name,data):
 
     rows = [data.columns.tolist()] + data.astype(str).values.tolist()
 
-    safe_api_call(
+    safe_call(
         lambda: ws.update("A1",rows)
     )
 
 
-# TOTAL
 update_tab("Total_IDs",final_df)
 
-# COMPLETE
 update_tab(
 "Complete_IDs",
 final_df[final_df["Status"]=="Complete"]
 )
 
-# LPE
 update_tab(
 "LPE_IDs",
 final_df[final_df["Status"]=="LPE"]
 )
 
 
-print("PIPELINE FINISHED SUCCESSFULLY")
+print("PIPELINE COMPLETED SUCCESSFULLY")
