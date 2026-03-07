@@ -20,7 +20,6 @@ gc = gspread.authorize(creds)
 # Drive API
 from googleapiclient.discovery import build
 drive_service = build('drive', 'v3', credentials=creds)
-
 folder_id = '1JpmPfqOFhXCW6H1YnsI6pp07qLMLv3Qo'
 query = f"'{folder_id}' in parents and mimeType='application/vnd.google-apps.spreadsheet' and trashed = false"
 response = drive_service.files().list(q=query, pageSize=1000).execute()
@@ -29,9 +28,7 @@ files = response.get('files', [])
 listofFrames = []
 excluded_sheets = {"Quota", "RnD", "Proxy", "OE", "FIDs", "BRANDS", "Section Sheet", "openEnd"}
 
-# -----------------------------
-# Helper function: safe gspread call with retry + exponential backoff
-# -----------------------------
+# Helper: safe gspread call with retries
 def safe_gspread_call(func, retries=5, wait=2):
     for i in range(retries):
         try:
@@ -39,16 +36,14 @@ def safe_gspread_call(func, retries=5, wait=2):
         except gspread.exceptions.APIError as e:
             if "429" in str(e) or "503" in str(e):
                 print(f"Rate limit hit / service unavailable, retry {i+1}/{retries}")
-                time.sleep(wait * (2 ** i))  # exponential backoff
+                time.sleep(wait * (2 ** i))
             else:
                 raise
     raise Exception("Failed after retries")
 
-# -----------------------------
-# Loop through files and worksheets
-# -----------------------------
+# Loop through each file
 for file in files:
-    time.sleep(2)  # small delay per spreadsheet
+    time.sleep(2)  # avoid rate limit
     spreadsheet = safe_gspread_call(lambda: gc.open_by_key(file['id']))
     all_sheets = safe_gspread_call(lambda: [sheet.title for sheet in spreadsheet.worksheets()])
     selected_sheets = [name for name in all_sheets if name not in excluded_sheets]
@@ -61,10 +56,10 @@ for file in files:
         if len(data) < 5:
             continue
 
-        # Create DataFrame safely
+        # DataFrame with only first 12 columns
         df = pd.DataFrame(data[4:])
         header = data[3]
-        df = df.iloc[:, :len(header)]  # only take columns present in header
+        df = df.iloc[:, :len(header)]
         df.columns = header[:len(df.columns)]
         df = df.loc[:, ~df.columns.duplicated()]
 
@@ -73,9 +68,7 @@ for file in files:
 
         listofFrames.append(df)
 
-# -----------------------------
-# Combine all DataFrames and update target sheets
-# -----------------------------
+# Combine all DataFrames
 if listofFrames:
     combinedf = pd.concat(listofFrames, ignore_index=True)
     combinedff = combinedf[combinedf['Status'].notna() & (combinedf['Status'] != '')]
