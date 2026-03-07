@@ -38,7 +38,7 @@ for file in files:
 
     selected_sheets = [name for name in all_sheets if name not in excluded_sheets]
 
-    for sheet_name in selected_sheets:
+for sheet_name in selected_sheets:
     worksheet = spreadsheet.worksheet(sheet_name)
     data = worksheet.get("A:L")
 
@@ -46,7 +46,6 @@ for file in files:
         continue
 
     df = pd.DataFrame(data[4:])
-
     header = data[3]
     df = df.iloc[:, :len(header)]
     df.columns = header[:len(df.columns)]
@@ -88,6 +87,7 @@ if listofFrames:
 
 else:
     print("⚠️ No valid data found in selected sheets.")
+
 
 
 
