@@ -9,8 +9,8 @@ from googleapiclient.discovery import build
 with open("credentials.json", "w") as f:
     f.write(os.environ["GOOGLE_CREDENTIALS"])
 
-FOLDER_ID = "PASTE_FOLDER_ID"
-FINAL_SHEET_ID = "PASTE_FINAL_SHEET_ID"
+FOLDER_ID = "1JpmPfqOFhXCW6H1YnsI6pp07qLMLv3Qo"
+FINAL_SHEET_ID = "1L9QHbdpc5DZyDzrZhpQaiu4T0tWM1naQ6MO7CJXRC0I"
 
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
@@ -79,3 +79,4 @@ if all_data:
     )
 
 print("DONE")
+
