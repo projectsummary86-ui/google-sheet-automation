@@ -17,9 +17,10 @@ creds = Credentials.from_service_account_info(
 )
 gc = gspread.authorize(creds)
 
-# Drive API to list spreadsheets
+# Drive API
 from googleapiclient.discovery import build
 drive_service = build('drive', 'v3', credentials=creds)
+
 folder_id = '1JpmPfqOFhXCW6H1YnsI6pp07qLMLv3Qo'
 query = f"'{folder_id}' in parents and mimeType='application/vnd.google-apps.spreadsheet' and trashed = false"
 response = drive_service.files().list(q=query, pageSize=1000).execute()
@@ -29,7 +30,7 @@ listofFrames = []
 excluded_sheets = {"Quota", "RnD", "Proxy", "OE", "FIDs", "BRANDS", "Section Sheet", "openEnd"}
 
 # -----------------------------
-# Helper function: safe gspread call with retry + backoff
+# Helper function: safe gspread call with retry + exponential backoff
 # -----------------------------
 def safe_gspread_call(func, retries=5, wait=2):
     for i in range(retries):
@@ -63,7 +64,7 @@ for file in files:
         # Create DataFrame safely
         df = pd.DataFrame(data[4:])
         header = data[3]
-        df = df.iloc[:, :len(header)]
+        df = df.iloc[:, :len(header)]  # only take columns present in header
         df.columns = header[:len(df.columns)]
         df = df.loc[:, ~df.columns.duplicated()]
 
@@ -73,7 +74,7 @@ for file in files:
         listofFrames.append(df)
 
 # -----------------------------
-# Combine all DataFrames
+# Combine all DataFrames and update target sheets
 # -----------------------------
 if listofFrames:
     combinedf = pd.concat(listofFrames, ignore_index=True)
