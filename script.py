@@ -44,30 +44,25 @@ def safe_gspread_call(func, retries=5, wait=2):
     raise Exception("Failed after retries")
 
 # -----------------------------
-# Loop through files
+# Loop through files and worksheets
 # -----------------------------
 for file in files:
-    # Delay per spreadsheet to avoid hitting quota
-    time.sleep(2)
-
+    time.sleep(2)  # small delay per spreadsheet
     spreadsheet = safe_gspread_call(lambda: gc.open_by_key(file['id']))
     all_sheets = safe_gspread_call(lambda: [sheet.title for sheet in spreadsheet.worksheets()])
     selected_sheets = [name for name in all_sheets if name not in excluded_sheets]
 
-    if not selected_sheets:
-        continue
+    for sheet_name in selected_sheets:
+        time.sleep(1)  # small delay per worksheet
+        worksheet = safe_gspread_call(lambda: spreadsheet.worksheet(sheet_name))
+        data = safe_gspread_call(lambda: worksheet.get("A:L"))
 
-    # Batch read all selected sheets at once
-    ranges = [f"{sheet_name}!A:L" for sheet_name in selected_sheets]
-    all_data_list = safe_gspread_call(lambda: spreadsheet.batch_get(ranges))
-
-    for sheet_data in all_data_list:
-        if len(sheet_data) < 5:
+        if len(data) < 5:
             continue
 
         # Create DataFrame safely
-        df = pd.DataFrame(sheet_data[4:])
-        header = sheet_data[3]
+        df = pd.DataFrame(data[4:])
+        header = data[3]
         df = df.iloc[:, :len(header)]
         df.columns = header[:len(df.columns)]
         df = df.loc[:, ~df.columns.duplicated()]
