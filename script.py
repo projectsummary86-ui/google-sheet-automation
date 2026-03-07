@@ -39,22 +39,24 @@ for file in files:
     selected_sheets = [name for name in all_sheets if name not in excluded_sheets]
 
     for sheet_name in selected_sheets:
-        worksheet = spreadsheet.worksheet(sheet_name)
-        data = worksheet.get("A:L")
+    worksheet = spreadsheet.worksheet(sheet_name)
+    data = worksheet.get("A:L")
 
-        if len(data) < 5:
-            continue
+    if len(data) < 5:
+        continue
 
-        df = pd.DataFrame(data[4:])
-        df = df.iloc[:, :len(data[3])]
-        df.columns = data[3]
+    df = pd.DataFrame(data[4:])
 
-        df = df.loc[:, ~df.columns.duplicated()]
+    header = data[3]
+    df = df.iloc[:, :len(header)]
+    df.columns = header[:len(df.columns)]
 
-        if 'Status' not in df.columns:
-            continue
+    df = df.loc[:, ~df.columns.duplicated()]
 
-        listofFrames.append(df)
+    if 'Status' not in df.columns:
+        continue
+
+    listofFrames.append(df)
 
 # 📊 Combine all DataFrames
 if listofFrames:
@@ -86,5 +88,6 @@ if listofFrames:
 
 else:
     print("⚠️ No valid data found in selected sheets.")
+
 
 
