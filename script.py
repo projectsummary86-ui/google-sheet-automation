@@ -28,27 +28,31 @@ files = response.get('files', [])
 listofFrames = []
 excluded_sheets = {"Quota", "RnD", "Proxy", "OE", "FIDs", "BRANDS", "Section Sheet", "openEnd"}
 
-# Helper function for retry
-def open_sheet_with_retry(gc, key, retries=3, wait=5):
+# -----------------------------
+# Helper function: Retry + throttle for API quota
+# -----------------------------
+def safe_gspread_call(func, retries=5, wait=2):
     for i in range(retries):
         try:
-            return gc.open_by_key(key)
-        except Exception as e:
-            print(f"Attempt {i+1} failed: {e}")
-            if i < retries - 1:
-                time.sleep(wait)
+            return func()
+        except gspread.exceptions.APIError as e:
+            if "429" in str(e) or "503" in str(e):
+                print(f"Rate limit hit / service unavailable, retry {i+1}/{retries}")
+                time.sleep(wait * (2 ** i))  # exponential backoff
             else:
                 raise
+    raise Exception("Failed after retries")
 
 # Loop through each file
 for file in files:
-    spreadsheet = open_sheet_with_retry(gc, file['id'])
-    all_sheets = [sheet.title for sheet in spreadsheet.worksheets()]
+    spreadsheet = safe_gspread_call(lambda: gc.open_by_key(file['id']))
+    all_sheets = safe_gspread_call(lambda: [sheet.title for sheet in spreadsheet.worksheets()])
     selected_sheets = [name for name in all_sheets if name not in excluded_sheets]
 
     for sheet_name in selected_sheets:
-        worksheet = spreadsheet.worksheet(sheet_name)
-        data = worksheet.get("A:L")
+        worksheet = safe_gspread_call(lambda: spreadsheet.worksheet(sheet_name))
+        time.sleep(1)  # small delay to avoid hitting quota
+        data = safe_gspread_call(lambda: worksheet.get("A:L"))
 
         if len(data) < 5:
             continue
@@ -58,7 +62,6 @@ for file in files:
         header = data[3]
         df = df.iloc[:, :len(header)]
         df.columns = header[:len(df.columns)]
-
         df = df.loc[:, ~df.columns.duplicated()]
 
         if 'Status' not in df.columns:
@@ -66,7 +69,9 @@ for file in files:
 
         listofFrames.append(df)
 
+# -----------------------------
 # Combine all DataFrames
+# -----------------------------
 if listofFrames:
     combinedf = pd.concat(listofFrames, ignore_index=True)
     combinedff = combinedf[combinedf['Status'].notna() & (combinedf['Status'] != '')]
@@ -74,21 +79,21 @@ if listofFrames:
     combinedata = [combinedff.columns.to_list()] + combinedff.astype(str).values.tolist()
 
     # Update Total_IDs
-    worksheetms = gc.open_by_key('1L9QHbdpc5DZyDzrZhpQaiu4T0tWM1naQ6MO7CJXRC0I').worksheet("Total_IDs")
+    worksheetms = safe_gspread_call(lambda: gc.open_by_key('1L9QHbdpc5DZyDzrZhpQaiu4T0tWM1naQ6MO7CJXRC0I').worksheet("Total_IDs"))
     worksheetms.clear()
     worksheetms.update('A1', combinedata, value_input_option="USER_ENTERED")
 
     # Filter Complete
     completeIds = combinedff[combinedff["Status"] == "Complete"]
     combinedata2 = [completeIds.columns.to_list()] + completeIds.astype(str).values.tolist()
-    worksheetms2 = gc.open_by_key('1L9QHbdpc5DZyDzrZhpQaiu4T0tWM1naQ6MO7CJXRC0I').worksheet("Complete_IDs")
+    worksheetms2 = safe_gspread_call(lambda: gc.open_by_key('1L9QHbdpc5DZyDzrZhpQaiu4T0tWM1naQ6MO7CJXRC0I').worksheet("Complete_IDs"))
     worksheetms2.clear()
     worksheetms2.update('A1', combinedata2, value_input_option="USER_ENTERED")
 
     # Filter LPE
     LPEIds = combinedff[combinedff["Status"] == "LPE"]
     combinedata3 = [LPEIds.columns.to_list()] + LPEIds.astype(str).values.tolist()
-    worksheetms3 = gc.open_by_key('1L9QHbdpc5DZyDzrZhpQaiu4T0tWM1naQ6MO7CJXRC0I').worksheet("LPE_IDs")
+    worksheetms3 = safe_gspread_call(lambda: gc.open_by_key('1L9QHbdpc5DZyDzrZhpQaiu4T0tWM1naQ6MO7CJXRC0I').worksheet("LPE_IDs"))
     worksheetms3.clear()
     worksheetms3.update('A1', combinedata3, value_input_option="USER_ENTERED")
 
