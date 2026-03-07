@@ -17,7 +17,7 @@ creds = Credentials.from_service_account_info(
 )
 gc = gspread.authorize(creds)
 
-# Drive API
+# Drive API to list spreadsheets
 from googleapiclient.discovery import build
 drive_service = build('drive', 'v3', credentials=creds)
 folder_id = '1JpmPfqOFhXCW6H1YnsI6pp07qLMLv3Qo'
@@ -29,7 +29,7 @@ listofFrames = []
 excluded_sheets = {"Quota", "RnD", "Proxy", "OE", "FIDs", "BRANDS", "Section Sheet", "openEnd"}
 
 # -----------------------------
-# Helper function: Retry + throttle for API quota
+# Helper function: safe gspread call with retry + backoff
 # -----------------------------
 def safe_gspread_call(func, retries=5, wait=2):
     for i in range(retries):
@@ -43,23 +43,31 @@ def safe_gspread_call(func, retries=5, wait=2):
                 raise
     raise Exception("Failed after retries")
 
-# Loop through each file
+# -----------------------------
+# Loop through files
+# -----------------------------
 for file in files:
+    # Delay per spreadsheet to avoid hitting quota
+    time.sleep(2)
+
     spreadsheet = safe_gspread_call(lambda: gc.open_by_key(file['id']))
     all_sheets = safe_gspread_call(lambda: [sheet.title for sheet in spreadsheet.worksheets()])
     selected_sheets = [name for name in all_sheets if name not in excluded_sheets]
 
-    for sheet_name in selected_sheets:
-        worksheet = safe_gspread_call(lambda: spreadsheet.worksheet(sheet_name))
-        time.sleep(1)  # small delay to avoid hitting quota
-        data = safe_gspread_call(lambda: worksheet.get("A:L"))
+    if not selected_sheets:
+        continue
 
-        if len(data) < 5:
+    # Batch read all selected sheets at once
+    ranges = [f"{sheet_name}!A:L" for sheet_name in selected_sheets]
+    all_data_list = safe_gspread_call(lambda: spreadsheet.batch_get(ranges))
+
+    for sheet_data in all_data_list:
+        if len(sheet_data) < 5:
             continue
 
         # Create DataFrame safely
-        df = pd.DataFrame(data[4:])
-        header = data[3]
+        df = pd.DataFrame(sheet_data[4:])
+        header = sheet_data[3]
         df = df.iloc[:, :len(header)]
         df.columns = header[:len(df.columns)]
         df = df.loc[:, ~df.columns.duplicated()]
