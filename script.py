@@ -6,12 +6,10 @@ from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 
 
-# ---------- CREATE CREDENTIAL FILE ----------
+# ---------- AUTH ----------
 with open("credentials.json","w") as f:
     f.write(os.environ["GOOGLE_CREDENTIALS"])
 
-
-# ---------- AUTH ----------
 SCOPES = [
 "https://www.googleapis.com/auth/spreadsheets",
 "https://www.googleapis.com/auth/drive"
@@ -23,7 +21,6 @@ scopes=SCOPES
 )
 
 gc = gspread.authorize(creds)
-
 drive_service = build("drive","v3",credentials=creds)
 
 
@@ -37,7 +34,7 @@ excluded_sheets = {
 }
 
 
-# ---------- GET SPREADSHEETS ----------
+# ---------- GET FILES ----------
 query = f"'{folder_id}' in parents and mimeType='application/vnd.google-apps.spreadsheet'"
 
 response = drive_service.files().list(
@@ -50,8 +47,10 @@ files = response.get("files",[])
 print("Total spreadsheets:",len(files))
 
 
-# ---------- STORE FINAL DATA ----------
-all_rows = []
+# ---------- STORE DATA ----------
+all_rows=[]
+complete_rows=[]
+lpe_rows=[]
 
 
 # ---------- READ FILES ----------
@@ -70,61 +69,71 @@ for file in files:
             if ws.title in excluded_sheets:
                 continue
 
-
             try:
 
                 data = ws.get_all_values()
 
-                if not data or len(data) < 4:
+                if not data or len(data)<4:
                     continue
 
-
-                # data starts from row 4
-                rows = data[3:]
-
+                rows=data[3:]
 
                 for r in rows:
 
-                    if len(r) < 12:
+                    if len(r)<12:
                         continue
 
+                    status=str(r[6]).strip()
 
-                    status = str(r[6]).strip()
-
-
-                    # skip blank status
-                    if status == "":
+                    if status=="":
                         continue
 
+                    row=r[:12]
 
-                    # take only first 12 columns
-                    all_rows.append(r[:12])
+                    all_rows.append(row)
 
+                    if status.lower()=="complete":
+                        complete_rows.append(row)
+
+                    if status.lower()=="lpe":
+                        lpe_rows.append(row)
 
             except Exception as e:
-
                 print("Sheet skipped:",ws.title)
-
 
             # delay to avoid API quota
             time.sleep(2)
 
-
     except Exception as e:
-
         print("Spreadsheet skipped:",file["name"])
 
 
-# ---------- WRITE FINAL DATA ----------
+
+# ---------- WRITE RESULT ----------
 sheet = gc.open_by_key(final_sheet_id)
 
-ws = sheet.worksheet("Total_IDs")
+ws_total=sheet.worksheet("Total_IDs")
+ws_complete=sheet.worksheet("Complete_IDs")
+ws_lpe=sheet.worksheet("LPE_IDs")
 
 
-print("Writing data...")
+print("Clearing old data...")
+
+ws_total.batch_clear(["A2:Z"])
+ws_complete.batch_clear(["A2:Z"])
+ws_lpe.batch_clear(["A2:Z"])
+
+
+print("Writing new data...")
 
 if all_rows:
+    ws_total.update("A2",all_rows)
 
-    ws.update("A2",all_rows)
+if complete_rows:
+    ws_complete.update("A2",complete_rows)
+
+if lpe_rows:
+    ws_lpe.update("A2",lpe_rows)
+
 
 print("SUCCESS: DATA MERGED")
