@@ -31,22 +31,30 @@ listofFrames = []
 
 excluded_sheets = {"Quota", "RnD", "Proxy", "OE", "FIDs", "BRANDS", "Section Sheet", "openEnd"}
 
-for sheet_name in selected_sheets:
-    worksheet = spreadsheet.worksheet(sheet_name)
-    data = worksheet.get("A:L")
+for file in files:
+    spreadsheet = gc.open_by_key(file['id'])
 
-    if len(data) < 5:
-        continue
+    all_sheets = [sheet.title for sheet in spreadsheet.worksheets()]
 
-    df = pd.DataFrame(data[4:])
-    df.columns = data[3][:len(df.columns)]
+    selected_sheets = [name for name in all_sheets if name not in excluded_sheets]
 
-    df = df.loc[:, ~df.columns.duplicated()]
+    for sheet_name in selected_sheets:
+        worksheet = spreadsheet.worksheet(sheet_name)
+        data = worksheet.get("A:L")
 
-    if 'Status' not in df.columns:
-        continue
+        if len(data) < 5:
+            continue
 
-    listofFrames.append(df)
+        df = pd.DataFrame(data[4:])
+        df = df.iloc[:, :len(data[3])]
+        df.columns = data[3]
+
+        df = df.loc[:, ~df.columns.duplicated()]
+
+        if 'Status' not in df.columns:
+            continue
+
+        listofFrames.append(df)
 
 # 📊 Combine all DataFrames
 if listofFrames:
@@ -78,4 +86,5 @@ if listofFrames:
 
 else:
     print("⚠️ No valid data found in selected sheets.")
+
 
