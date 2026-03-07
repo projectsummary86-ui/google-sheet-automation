@@ -1,4 +1,4 @@
-# 🔐 Authenticate Google services
+# 🔐 Final Robust Google Sheet Automation Script
 import os
 import json
 import gspread
@@ -73,10 +73,16 @@ for file in files:
             continue
 
         # ------------------------
-        # Fix for inconsistent row lengths
+        # Fix inconsistent row lengths (Code 2 + Code 1 reference)
         # ------------------------
         header = data[3]
-        rows = [row[:len(header)] for row in data[4:]]  # trim extra columns
+        rows = []
+        for row in data[4:]:
+            if len(row) < len(header):
+                row += [''] * (len(header) - len(row))  # pad missing cells
+            row = row[:len(header)]  # trim extra cells
+            rows.append(row)
+
         df = pd.DataFrame(rows, columns=header)
         df = df.loc[:, ~df.columns.duplicated()]
 
