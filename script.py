@@ -2,6 +2,7 @@ import os
 import gspread
 import pandas as pd
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 
@@ -19,16 +20,14 @@ creds = Credentials.from_service_account_file("credentials.json", scopes=SCOPES)
 gc = gspread.authorize(creds)
 drive_service = build("drive", "v3", credentials=creds)
 
-# 📁 Folder ID
+# Folder & Final Sheet
 folder_id = "1JpmPfqOFhXCW6H1YnsI6pp07qLMLv3Qo"
-
-# 📄 Final Sheet
 final_sheet_id = "1L9QHbdpc5DZyDzrZhpQaiu4T0tWM1naQ6MO7CJXRC0I"
 
-# ❌ Sheets to skip
+# Sheets to skip
 excluded_sheets = {"Quota", "RnD", "Proxy", "OE", "FIDs", "BRANDS", "Section Sheet", "openEnd"}
 
-# 📂 Get spreadsheets inside folder
+# Get spreadsheets inside folder
 query = f"'{folder_id}' in parents and mimeType='application/vnd.google-apps.spreadsheet' and trashed=false"
 
 response = drive_service.files().list(
@@ -38,11 +37,12 @@ response = drive_service.files().list(
 
 files = response.get("files", [])
 
-print("Total spreadsheets found:", len(files))
+print("Total spreadsheets:", len(files))
 
-frames = []
 
-for file in files:
+def process_spreadsheet(file):
+
+    frames = []
 
     try:
 
@@ -69,16 +69,30 @@ for file in files:
 
             frames.append(df)
 
-        time.sleep(0.5)
-
     except Exception as e:
 
-        print("Error reading:", file["name"], e)
+        print("Error:", file["name"], e)
 
-# 📊 Combine all data
-if frames:
+    return frames
 
-    combinedf = pd.concat(frames, ignore_index=True)
+
+all_frames = []
+
+# Parallel processing (ULTRA speed)
+with ThreadPoolExecutor(max_workers=5) as executor:
+
+    futures = [executor.submit(process_spreadsheet, file) for file in files]
+
+    for future in as_completed(futures):
+
+        result = future.result()
+
+        if result:
+            all_frames.extend(result)
+
+if all_frames:
+
+    combinedf = pd.concat(all_frames, ignore_index=True)
 
     combinedff = combinedf[
         combinedf["Status"].notna() &
@@ -96,6 +110,7 @@ if frames:
 
     # COMPLETE
     complete = combinedff[combinedff["Status"] == "Complete"]
+
     complete_data = [complete.columns.tolist()] + complete.astype(str).values.tolist()
 
     ws_complete = sheet.worksheet("Complete_IDs")
@@ -104,6 +119,7 @@ if frames:
 
     # LPE
     lpe = combinedff[combinedff["Status"] == "LPE"]
+
     lpe_data = [lpe.columns.tolist()] + lpe.astype(str).values.tolist()
 
     ws_lpe = sheet.worksheet("LPE_IDs")
