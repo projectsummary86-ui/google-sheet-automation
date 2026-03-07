@@ -3,6 +3,7 @@ import os
 import json
 import gspread
 from google.oauth2.service_account import Credentials
+from googleapiclient.discovery import build
 import pandas as pd
 import time
 import random
@@ -19,23 +20,21 @@ creds = Credentials.from_service_account_info(
     ]
 )
 gc = gspread.authorize(creds)
-
-# ------------------------
-# Drive API
-# ------------------------
-from googleapiclient.discovery import build
 drive_service = build('drive', 'v3', credentials=creds)
 
+# ------------------------
+# Folder & files
+# ------------------------
 folder_id = '1JpmPfqOFhXCW6H1YnsI6pp07qLMLv3Qo'
 query = f"'{folder_id}' in parents and mimeType='application/vnd.google-apps.spreadsheet' and trashed = false"
 response = drive_service.files().list(q=query, pageSize=1000).execute()
 files = response.get('files', [])
 
-listofFrames = []
 excluded_sheets = {"Quota", "RnD", "Proxy", "OE", "FIDs", "BRANDS", "Section Sheet", "openEnd"}
+listofFrames = []
 
 # ------------------------
-# Safe API call with retry + backoff
+# Safe gspread call with retry
 # ------------------------
 def safe_gspread_call(func, retries=5, wait=5):
     for attempt in range(retries):
@@ -51,7 +50,7 @@ def safe_gspread_call(func, retries=5, wait=5):
                 return None
 
 # ------------------------
-# Loop through each file
+# Loop through files and sheets
 # ------------------------
 for file in files:
     spreadsheet = safe_gspread_call(lambda: gc.open_by_key(file['id']))
@@ -73,10 +72,7 @@ for file in files:
         if not data or len(data) < 5:
             continue
 
-        df = pd.DataFrame(data[4:])  # skip first 4 rows
-        header = data[3]
-        df = df.iloc[:, :len(header)]
-        df.columns = header[:len(df.columns)]
+        df = pd.DataFrame(data[4:], columns=data[3])
         df = df.loc[:, ~df.columns.duplicated()]
 
         if 'Status' not in df.columns:
@@ -85,20 +81,20 @@ for file in files:
         listofFrames.append(df)
 
 # ------------------------
-# Combine all DataFrames and push to sheets
+# Combine & update sheets
 # ------------------------
+def update_sheet(sheet_name, df_list):
+    ws = safe_gspread_call(lambda: gc.open_by_key('1L9QHbdpc5DZyDzrZhpQaiu4T0tWM1naQ6MO7CJXRC0I').worksheet(sheet_name))
+    if not ws:
+        return
+    safe_gspread_call(lambda: ws.clear())
+    safe_gspread_call(lambda: ws.update('A1', df_list, value_input_option="USER_ENTERED"))
+
 if listofFrames:
     combinedf = pd.concat(listofFrames, ignore_index=True)
     combinedff = combinedf[combinedf['Status'].notna() & (combinedf['Status'] != '')]
+
     combinedata = [combinedff.columns.to_list()] + combinedff.astype(str).values.tolist()
-
-    def update_sheet(sheet_name, df):
-        ws = safe_gspread_call(lambda: gc.open_by_key('1L9QHbdpc5DZyDzrZhpQaiu4T0tWM1naQ6MO7CJXRC0I').worksheet(sheet_name))
-        if not ws:
-            return
-        safe_gspread_call(lambda: ws.clear())
-        safe_gspread_call(lambda: ws.update('A1', df, value_input_option="USER_ENTERED"))
-
     update_sheet("Total_IDs", combinedata)
 
     completeIds = combinedff[combinedff["Status"] == "Complete"]
