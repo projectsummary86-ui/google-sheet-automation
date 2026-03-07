@@ -1,15 +1,20 @@
 import os
-import gspread
-import pandas as pd
 import time
+import pandas as pd
+import gspread
+
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
+from gspread.exceptions import APIError
 
-# Create credentials.json from GitHub secret
+
+# ---------- CREATE CREDENTIAL FILE ----------
 with open("credentials.json", "w") as f:
     f.write(os.environ["GOOGLE_CREDENTIALS"])
 
+
+# ---------- AUTH ----------
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive"
@@ -20,14 +25,18 @@ creds = Credentials.from_service_account_file("credentials.json", scopes=SCOPES)
 gc = gspread.authorize(creds)
 drive_service = build("drive", "v3", credentials=creds)
 
-# Folder & Final Sheet
+
+# ---------- CONFIG ----------
 folder_id = "1JpmPfqOFhXCW6H1YnsI6pp07qLMLv3Qo"
 final_sheet_id = "1L9QHbdpc5DZyDzrZhpQaiu4T0tWM1naQ6MO7CJXRC0I"
 
-# Sheets to skip
-excluded_sheets = {"Quota", "RnD", "Proxy", "OE", "FIDs", "BRANDS", "Section Sheet", "openEnd"}
+excluded_sheets = {
+    "Quota","RnD","Proxy","OE",
+    "FIDs","BRANDS","Section Sheet","openEnd"
+}
 
-# Get spreadsheets inside folder
+
+# ---------- GET SPREADSHEETS ----------
 query = f"'{folder_id}' in parents and mimeType='application/vnd.google-apps.spreadsheet' and trashed=false"
 
 response = drive_service.files().list(
@@ -37,16 +46,44 @@ response = drive_service.files().list(
 
 files = response.get("files", [])
 
-print("Total spreadsheets:", len(files))
+print("Total Sheets Found:", len(files))
 
 
+# ---------- RETRY SYSTEM ----------
+def safe_read(func, retries=3):
+
+    for i in range(retries):
+        try:
+            return func()
+
+        except APIError as e:
+
+            print("Retrying API error:", e)
+
+            time.sleep(5)
+
+        except Exception as e:
+
+            print("General error:", e)
+
+            return None
+
+    return None
+
+
+# ---------- PROCESS ONE SPREADSHEET ----------
 def process_spreadsheet(file):
+
+    print("Reading:", file["name"])
 
     frames = []
 
     try:
 
-        spreadsheet = gc.open_by_key(file["id"])
+        spreadsheet = safe_read(lambda: gc.open_by_key(file["id"]))
+
+        if spreadsheet is None:
+            return frames
 
         worksheets = spreadsheet.worksheets()
 
@@ -55,13 +92,14 @@ def process_spreadsheet(file):
             if ws.title in excluded_sheets:
                 continue
 
-            data = ws.get_all_values()
+            data = safe_read(lambda: ws.get_all_values())
 
-            if len(data) < 4:
+            if not data or len(data) < 4:
                 continue
 
             df = pd.DataFrame(data[3:], columns=data[0])
 
+            # remove duplicate columns
             df = df.loc[:, ~df.columns.duplicated()]
 
             if "Status" not in df.columns:
@@ -76,58 +114,65 @@ def process_spreadsheet(file):
     return frames
 
 
-all_frames = []
+# ---------- PARALLEL PROCESS ----------
+all_data = []
 
-# Parallel processing (ULTRA speed)
-with ThreadPoolExecutor(max_workers=5) as executor:
+with ThreadPoolExecutor(max_workers=3) as executor:
 
-    futures = [executor.submit(process_spreadsheet, file) for file in files]
+    futures = [executor.submit(process_spreadsheet, f) for f in files]
 
     for future in as_completed(futures):
 
         result = future.result()
 
         if result:
-            all_frames.extend(result)
+            all_data.extend(result)
 
-if all_frames:
 
-    combinedf = pd.concat(all_frames, ignore_index=True)
+# ---------- MERGE DATA ----------
+if not all_data:
 
-    combinedff = combinedf[
-        combinedf["Status"].notna() &
-        (combinedf["Status"] != "")
-    ]
+    print("No data found")
+    exit()
 
-    sheet = gc.open_by_key(final_sheet_id)
 
-    # TOTAL
-    total_data = [combinedff.columns.tolist()] + combinedff.astype(str).values.tolist()
+final_df = pd.concat(all_data, ignore_index=True)
 
-    ws_total = sheet.worksheet("Total_IDs")
-    ws_total.clear()
-    ws_total.update("A1", total_data)
+final_df = final_df[
+    final_df["Status"].notna() &
+    (final_df["Status"] != "")
+]
 
-    # COMPLETE
-    complete = combinedff[combinedff["Status"] == "Complete"]
 
-    complete_data = [complete.columns.tolist()] + complete.astype(str).values.tolist()
+# ---------- WRITE TO FINAL SHEET ----------
+sheet = gc.open_by_key(final_sheet_id)
 
-    ws_complete = sheet.worksheet("Complete_IDs")
-    ws_complete.clear()
-    ws_complete.update("A1", complete_data)
 
-    # LPE
-    lpe = combinedff[combinedff["Status"] == "LPE"]
+def update_sheet(name, dataframe):
 
-    lpe_data = [lpe.columns.tolist()] + lpe.astype(str).values.tolist()
+    ws = sheet.worksheet(name)
 
-    ws_lpe = sheet.worksheet("LPE_IDs")
-    ws_lpe.clear()
-    ws_lpe.update("A1", lpe_data)
+    ws.clear()
 
-    print("SUCCESS: Data updated")
+    data = [dataframe.columns.tolist()] + dataframe.astype(str).values.tolist()
 
-else:
+    ws.update("A1", data)
 
-    print("No valid data found")
+
+# TOTAL
+update_sheet("Total_IDs", final_df)
+
+# COMPLETE
+update_sheet(
+    "Complete_IDs",
+    final_df[final_df["Status"] == "Complete"]
+)
+
+# LPE
+update_sheet(
+    "LPE_IDs",
+    final_df[final_df["Status"] == "LPE"]
+)
+
+
+print("SUCCESS: Data Updated")
