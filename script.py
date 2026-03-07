@@ -40,10 +40,10 @@ for file in files:
         worksheet = spreadsheet.worksheet(sheet_name)
         data = worksheet.get("A:L")
 
-        if not data:
-            continue  # Skip empty sheets
+        if len(data) < 5:
+        continue
 
-        df = pd.DataFrame.from_records(data[3:], columns=data[0])
+        df = pd.DataFrame.from_records(data[4:], columns=data[3])
         df = df.loc[:, ~df.columns.duplicated()]  # Remove duplicate columns
 
         if 'Status' not in df.columns:
