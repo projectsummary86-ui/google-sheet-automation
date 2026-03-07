@@ -1,139 +1,81 @@
+# 🔐 Authenticate Google services
 import os
-import time
+import json
 import gspread
-
 from google.oauth2.service_account import Credentials
-from googleapiclient.discovery import build
 
+creds_dict = json.loads(os.environ["GOOGLE_CREDENTIALS"])
 
-# ---------- AUTH ----------
-with open("credentials.json","w") as f:
-    f.write(os.environ["GOOGLE_CREDENTIALS"])
-
-SCOPES = [
-"https://www.googleapis.com/auth/spreadsheets",
-"https://www.googleapis.com/auth/drive"
-]
-
-creds = Credentials.from_service_account_file(
-"credentials.json",
-scopes=SCOPES
+creds = Credentials.from_service_account_info(
+    creds_dict,
+    scopes=[
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive"
+    ]
 )
 
 gc = gspread.authorize(creds)
-drive_service = build("drive","v3",credentials=creds)
 
+# 📁 Use Drive API to list spreadsheet files in folder
+from googleapiclient.discovery import build
+drive_service = build('drive', 'v3', credentials=creds)
 
-# ---------- CONFIG ----------
-folder_id = "1JpmPfqOFhXCW6H1YnsI6pp07qLMLv3Qo"
-final_sheet_id = "1L9QHbdpc5DZyDzrZhpQaiu4T0tWM1naQ6MO7CJXRC0I"
+folder_id = '1JpmPfqOFhXCW6H1YnsI6pp07qLMLv3Qo'
+query = f"'{folder_id}' in parents and mimeType='application/vnd.google-apps.spreadsheet' and trashed = false"
+response = drive_service.files().list(q=query).execute()
+files = response.get('files', [])
 
-excluded_sheets = {
-"Quota","RnD","Proxy","OE",
-"FIDs","BRANDS","Section Sheet","openEnd"
-}
+import pandas as pd
 
+listofFrames = []
 
-# ---------- GET FILES ----------
-query = f"'{folder_id}' in parents and mimeType='application/vnd.google-apps.spreadsheet'"
+excluded_sheets = {"Quota", "RnD", "Proxy", "OE", "FIDs", "BRANDS", "Section Sheet", "openEnd"}
 
-response = drive_service.files().list(
-q=query,
-fields="files(id,name)"
-).execute()
-
-files = response.get("files",[])
-
-print("Total spreadsheets:",len(files))
-
-
-# ---------- STORE DATA ----------
-all_rows=[]
-complete_rows=[]
-lpe_rows=[]
-
-
-# ---------- READ FILES ----------
 for file in files:
+    spreadsheet = gc.open_by_key(file['id'])
+    all_sheets = [sheet.title for sheet in spreadsheet.worksheets()]
+    selected_sheets = [name for name in all_sheets if name not in excluded_sheets]
 
-    print("Reading:",file["name"])
+    for sheet_name in selected_sheets:
+        worksheet = spreadsheet.worksheet(sheet_name)
+        data = worksheet.get("A:L")
 
-    try:
+        if not data:
+            continue  # Skip empty sheets
 
-        spreadsheet = gc.open_by_key(file["id"])
+        df = pd.DataFrame.from_records(data[3:], columns=data[0])
+        df = df.loc[:, ~df.columns.duplicated()]  # Remove duplicate columns
 
-        worksheets = spreadsheet.worksheets()
+        if 'Status' not in df.columns:
+            continue  # Skip if Status column is missing
 
-        for ws in worksheets:
+        listofFrames.append(df)
 
-            if ws.title in excluded_sheets:
-                continue
+# 📊 Combine all DataFrames
+if listofFrames:
+    combinedf = pd.concat(listofFrames, ignore_index=True)
+    combinedff = combinedf[combinedf['Status'].notna() & (combinedf['Status'] != '')]
 
-            try:
+    combinedata = [combinedff.columns.to_list()] + combinedff.astype(str).values.tolist()
 
-                data = ws.get_all_values()
+    # 📤 Update "Total_IDs"
+    worksheetms = gc.open_by_key('1L9QHbdpc5DZyDzrZhpQaiu4T0tWM1naQ6MO7CJXRC0I').worksheet("Total_IDs")
+    worksheetms.clear()
+    worksheetms.update('A1', combinedata, value_input_option="USER_ENTERED")
 
-                if not data or len(data)<4:
-                    continue
+    # ✅ Filter "Complete"
+    completeIds = combinedff[combinedff["Status"] == "Complete"]
+    combinedata2 = [completeIds.columns.to_list()] + completeIds.astype(str).values.tolist()
+    worksheetms2 = gc.open_by_key('1L9QHbdpc5DZyDzrZhpQaiu4T0tWM1naQ6MO7CJXRC0I').worksheet("Complete_IDs")
+    worksheetms2.clear()
+    worksheetms2.update('A1', combinedata2, value_input_option="USER_ENTERED")
 
-                rows=data[3:]
+    # 🟡 Filter "LPE"
+    LPEIds = combinedff[combinedff["Status"] == "LPE"]
+    combinedata3 = [LPEIds.columns.to_list()] + LPEIds.astype(str).values.tolist()
+    worksheetms3 = gc.open_by_key('1L9QHbdpc5DZyDzrZhpQaiu4T0tWM1naQ6MO7CJXRC0I').worksheet("LPE_IDs")
+    worksheetms3.clear()
+    worksheetms3.update('A1', combinedata3, value_input_option="USER_ENTERED")
 
-                for r in rows:
-
-                    if len(r)<12:
-                        continue
-
-                    status=str(r[6]).strip()
-
-                    if status=="":
-                        continue
-
-                    row=r[:12]
-
-                    all_rows.append(row)
-
-                    if status.lower()=="complete":
-                        complete_rows.append(row)
-
-                    if status.lower()=="lpe":
-                        lpe_rows.append(row)
-
-            except Exception as e:
-                print("Sheet skipped:",ws.title)
-
-            # delay to avoid API quota
-            time.sleep(2)
-
-    except Exception as e:
-        print("Spreadsheet skipped:",file["name"])
-
-
-
-# ---------- WRITE RESULT ----------
-sheet = gc.open_by_key(final_sheet_id)
-
-ws_total=sheet.worksheet("Total_IDs")
-ws_complete=sheet.worksheet("Complete_IDs")
-ws_lpe=sheet.worksheet("LPE_IDs")
-
-
-print("Clearing old data...")
-
-ws_total.batch_clear(["A2:Z"])
-ws_complete.batch_clear(["A2:Z"])
-ws_lpe.batch_clear(["A2:Z"])
-
-
-print("Writing new data...")
-
-if all_rows:
-    ws_total.update("A2",all_rows)
-
-if complete_rows:
-    ws_complete.update("A2",complete_rows)
-
-if lpe_rows:
-    ws_lpe.update("A2",lpe_rows)
-
-
-print("SUCCESS: DATA MERGED")
+else:
+    print("⚠️ No valid data found in selected sheets.")
