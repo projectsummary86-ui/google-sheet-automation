@@ -1,7 +1,13 @@
+import os
+import json
 import gspread
 import pandas as pd
 import time
 from google.oauth2.service_account import Credentials
+
+# GitHub Secret se credentials.json create
+with open("credentials.json", "w") as f:
+    f.write(os.environ["GOOGLE_CREDENTIALS"])
 
 FOLDER_ID = "PASTE_FOLDER_ID"
 FINAL_SHEET_ID = "PASTE_FINAL_SHEET_ID"
@@ -14,8 +20,6 @@ scopes = [
 creds = Credentials.from_service_account_file("credentials.json", scopes=scopes)
 
 gc = gspread.authorize(creds)
-
-drive_service = gc.auth
 
 spreadsheet = gc.open_by_key(FINAL_SHEET_ID)
 output_sheet = spreadsheet.sheet1
