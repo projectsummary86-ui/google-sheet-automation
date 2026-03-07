@@ -41,7 +41,7 @@ for file in files:
         data = worksheet.get("A:L")
 
         if len(data) < 5:
-        continue
+            continue
 
         df = pd.DataFrame.from_records(data[4:], columns=data[3])
         df = df.loc[:, ~df.columns.duplicated()]  # Remove duplicate columns
@@ -66,6 +66,7 @@ if listofFrames:
     # ✅ Filter "Complete"
     completeIds = combinedff[combinedff["Status"] == "Complete"]
     combinedata2 = [completeIds.columns.to_list()] + completeIds.astype(str).values.tolist()
+
     worksheetms2 = gc.open_by_key('1L9QHbdpc5DZyDzrZhpQaiu4T0tWM1naQ6MO7CJXRC0I').worksheet("Complete_IDs")
     worksheetms2.clear()
     worksheetms2.update('A1', combinedata2, value_input_option="USER_ENTERED")
@@ -73,6 +74,7 @@ if listofFrames:
     # 🟡 Filter "LPE"
     LPEIds = combinedff[combinedff["Status"] == "LPE"]
     combinedata3 = [LPEIds.columns.to_list()] + LPEIds.astype(str).values.tolist()
+
     worksheetms3 = gc.open_by_key('1L9QHbdpc5DZyDzrZhpQaiu4T0tWM1naQ6MO7CJXRC0I').worksheet("LPE_IDs")
     worksheetms3.clear()
     worksheetms3.update('A1', combinedata3, value_input_option="USER_ENTERED")
