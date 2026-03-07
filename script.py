@@ -72,7 +72,12 @@ for file in files:
         if not data or len(data) < 5:
             continue
 
-        df = pd.DataFrame(data[4:], columns=data[3])
+        # ------------------------
+        # Fix for inconsistent row lengths
+        # ------------------------
+        header = data[3]
+        rows = [row[:len(header)] for row in data[4:]]  # trim extra columns
+        df = pd.DataFrame(rows, columns=header)
         df = df.loc[:, ~df.columns.duplicated()]
 
         if 'Status' not in df.columns:
@@ -81,7 +86,7 @@ for file in files:
         listofFrames.append(df)
 
 # ------------------------
-# Combine & update sheets
+# Function to update sheets safely
 # ------------------------
 def update_sheet(sheet_name, df_list):
     ws = safe_gspread_call(lambda: gc.open_by_key('1L9QHbdpc5DZyDzrZhpQaiu4T0tWM1naQ6MO7CJXRC0I').worksheet(sheet_name))
@@ -90,6 +95,9 @@ def update_sheet(sheet_name, df_list):
     safe_gspread_call(lambda: ws.clear())
     safe_gspread_call(lambda: ws.update('A1', df_list, value_input_option="USER_ENTERED"))
 
+# ------------------------
+# Combine & update all target sheets
+# ------------------------
 if listofFrames:
     combinedf = pd.concat(listofFrames, ignore_index=True)
     combinedff = combinedf[combinedf['Status'].notna() & (combinedf['Status'] != '')]
