@@ -73,8 +73,8 @@ for idx, file in enumerate(files):
 
         # Processing A:L data strictly
         temp_df = pd.DataFrame(data).iloc[:, :12]
-        header = temp_df.iloc[3].to_list() # Row 4
-        rows = temp_df.iloc[4:]           # Row 5 onwards
+        header = temp_df.iloc[0].to_list() # Row 4
+        rows = temp_df.iloc[3:]           # Row 5 onwards
         
         df = pd.DataFrame(rows.values, columns=header)
         df = df.loc[:, ~df.columns.duplicated()]
@@ -122,3 +122,4 @@ if listofFrames:
     print("✅ PROCESS COMPLETE!")
 else:
     print("⚠️ No data found to merge.")
+
