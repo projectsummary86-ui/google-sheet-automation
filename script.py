@@ -67,17 +67,31 @@ for idx, file in enumerate(files):
         if sheet.title in excluded_sheets:
             continue
 
-        data = call_api(lambda: sheet.get_all_values())
-        if not data or len(data) < 5:
+data = call_api(lambda: sheet.get_all_values())
+        if not data or len(data) < 4:
             continue
 
-        # Processing A:L data strictly
-        temp_df = pd.DataFrame(data).iloc[:, :12]
-        header = temp_df.iloc[1].to_list() # Row 4
-        rows = temp_df.iloc[3:]           # Row 5 onwards
-        
-        df = pd.DataFrame(rows.values, columns=header)
-        df = df.loc[:, ~df.columns.duplicated()]
+        try:
+            # --- Smart Header Search ---
+            header_row_index = -1
+            for i, row in enumerate(data[:5]): # Pehli 5 rows me Status dhoondo
+                if 'Status' in row:
+                    header_row_index = i
+                    break
+            
+            if header_row_index == -1:
+                print(f"❌ ERROR: 'Status' column dhoondne me fail! File: {f_name} -> {sheet.title}")
+                sys.exit(1)
+
+            # Header mil gaya, ab columns filter karo (A:L)
+            temp_df = pd.DataFrame(data).iloc[:, :12]
+            header = temp_df.iloc[header_row_index].to_list()
+            
+            # Data hamesha Row 4 (Index 3) se hi uthana hai
+            rows = temp_df.iloc[3:] 
+            
+            df = pd.DataFrame(rows.values, columns=header)
+            # ... (Baki filter logic same rahega)
 
         # Validation: Status column must exist
         if 'Status' not in df.columns:
@@ -122,5 +136,6 @@ if listofFrames:
     print("✅ PROCESS COMPLETE!")
 else:
     print("⚠️ No data found to merge.")
+
 
 
