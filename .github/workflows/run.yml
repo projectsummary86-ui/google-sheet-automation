@@ -3,14 +3,14 @@ name: Google Sheets Automation
 on:
   schedule:
     # Har 40 minute mein run hoga
-    - cron: "*/40 * * * *"
+    - cron: "0 */2 * * *"
   workflow_dispatch: # Taaki aap jab chahein button daba kar chala sakein
 
 jobs:
   run-script:
     runs-on: ubuntu-latest
     # Bahut zaroori: 100+ sheets ke liye script 20-30 min le sakti hai
-    timeout-minutes: 60 
+    timeout-minutes: 90 
 
     steps:
       - name: Checkout repo
