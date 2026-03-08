@@ -3,7 +3,7 @@ name: Google Sheets Automation
 on:
   schedule:
     # Har 40 minute mein run hoga
-    - cron: "0 */2 * * *"
+    - cron: "*/20 * * * *"
   workflow_dispatch: # Taaki aap jab chahein button daba kar chala sakein
 
 jobs:
