@@ -117,21 +117,35 @@ for idx, file in enumerate(files):
 # ------------------------
 # 4. Master Upload Function
 # ------------------------
+# ------------------------
+# 4. Uploading to Master Sheet (Fixed for JSON Error)
+# ------------------------
 def upload_master(sheet_name, final_df):
     if final_df.empty:
         print(f"ℹ️ No data for {sheet_name}")
         return
     
     print(f"📤 Uploading {len(final_df)} rows to {sheet_name}...")
+    
+    # --- THE FIX START ---
+    # NaN, Infinity, aur Null values ko khali string se replace karein
+    # Isse "Out of range float values" wala error khatam ho jayega
+    clean_df = final_df.fillna('')
+    
+    # Header + Data conversion (Ensuring everything is string or valid JSON)
+    values = [clean_df.columns.to_list()] + clean_df.astype(str).values.tolist()
+    # --- THE FIX END ---
+
     ws = call_api(lambda: gc.open_by_key(target_id).worksheet(sheet_name))
     if not ws: return
     
-    values = [final_df.columns.to_list()] + final_df.astype(str).values.tolist()
-    
     call_api(lambda: ws.clear())
     time.sleep(5)
+    
+    # Data ko update karna
     call_api(lambda: ws.update(range_name='A1', values=values, value_input_option="USER_ENTERED"))
-
+    time.sleep(2)
+    
 # --- Final Step ---
 if listofFrames:
     master_df = pd.concat(listofFrames, ignore_index=True)
@@ -141,4 +155,5 @@ if listofFrames:
     print("✅ MISSION SUCCESS: All data merged!")
 else:
     print("⚠️ No data found to merge.")
+
 
