@@ -2,12 +2,15 @@ name: Google Sheets Automation
 
 on:
   schedule:
+    # Har 40 minute mein run hoga
     - cron: "*/40 * * * *"
-  workflow_dispatch:
+  workflow_dispatch: # Taaki aap jab chahein button daba kar chala sakein
 
 jobs:
   run-script:
     runs-on: ubuntu-latest
+    # Bahut zaroori: 100+ sheets ke liye script 20-30 min le sakti hai
+    timeout-minutes: 60 
 
     steps:
       - name: Checkout repo
@@ -19,9 +22,13 @@ jobs:
           python-version: "3.11"
 
       - name: Install libraries
-        run: pip install -r requirements.txt
+        # Ensure kijiye requirements.txt mein gspread, google-auth, aur pandas ho
+        run: |
+          python -m pip install --upgrade pip
+          pip install gspread google-auth google-api-python-client pandas
 
       - name: Run Script
         env:
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+        # Agar aapki file ka naam 'script.py' hai toh ye line sahi hai
         run: python script.py
