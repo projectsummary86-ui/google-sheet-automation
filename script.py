@@ -19,6 +19,7 @@ gc = gspread.authorize(creds)
 drive_service = build('drive', 'v3', credentials=creds)
 
 folder_id = '1JpmPfqOFhXCW6H1YnsI6pp07qLMLv3Qo'
+# Aapki updated target ID
 target_id = '1FpB86GuKtRou9hiebmUn2eHU1bSFvqOlK_XSuqRN0vg'
 excluded_sheets = {"Quota", "RnD", "Proxy", "OE", "FIDs", "BRANDS", "Section Sheet", "openEnd"}
 
@@ -28,15 +29,14 @@ listofFrames = []
 # 2. Strict API Call (Respecting 60 RPM)
 # ------------------------
 def call_api(func):
-    """Har call ke beech 1.6 sec ka gap taaki 1 minute me 40 calls se zyada na ho."""
     max_retries = 5
     for i in range(max_retries):
         try:
-            time.sleep(1.6) # Safe gap for Free Tier
+            time.sleep(1.7) # Thoda aur safe margin
             return func()
         except Exception as e:
             if "429" in str(e):
-                wait = 70 + (i * 20)
+                wait = 75 + (i * 20)
                 print(f"⏳ Quota limit hit. Waiting {wait}s...")
                 time.sleep(wait)
             else:
@@ -62,20 +62,24 @@ for idx, file in enumerate(files):
     if not spreadsheet: continue
     
     worksheets = call_api(lambda: spreadsheet.worksheets())
+    if not worksheets: continue
 
     for sheet in worksheets:
         if sheet.title in excluded_sheets:
             continue
 
-data = call_api(lambda: sheet.get_all_values())
+        data = call_api(lambda: sheet.get_all_values())
         if not data or len(data) < 4:
             continue
 
         try:
-            # --- Smart Header Search ---
+            # --- Smart Header Search (Merged Cell Friendly) ---
             header_row_index = -1
-            for i, row in enumerate(data[:5]): # Pehli 5 rows me Status dhoondo
-                if 'Status' in row:
+            # Pehli 6 rows scan karenge kyunki headers upar-niche ho sakte hain
+            for i, row in enumerate(data[:6]):
+                # Strip spaces taaki ' Status ' jaisa data bhi match ho jaye
+                clean_row = [str(c).strip() for c in row]
+                if 'Status' in clean_row:
                     header_row_index = i
                     break
             
@@ -83,29 +87,36 @@ data = call_api(lambda: sheet.get_all_values())
                 print(f"❌ ERROR: 'Status' column dhoondne me fail! File: {f_name} -> {sheet.title}")
                 sys.exit(1)
 
-            # Header mil gaya, ab columns filter karo (A:L)
+            # Columns filter A:L (0 to 11)
             temp_df = pd.DataFrame(data).iloc[:, :12]
             header = temp_df.iloc[header_row_index].to_list()
             
-            # Data hamesha Row 4 (Index 3) se hi uthana hai
+            # Data hamesha Row 4 (Index 3) se start ho raha hai
             rows = temp_df.iloc[3:] 
             
+            # DataFrame banana
             df = pd.DataFrame(rows.values, columns=header)
-            # ... (Baki filter logic same rahega)
+            
+            # Duplicate column names handle karna (e.g. do empty columns)
+            df = df.loc[:, ~df.columns.duplicated()]
 
-        # Validation: Status column must exist
-        if 'Status' not in df.columns:
-            print(f"❌ ERROR: 'Status' column missing in {f_name} -> {sheet.title}")
+            # Validation check
+            if 'Status' not in df.columns:
+                print(f"❌ ERROR: 'Status' column missing in DataFrame structure: {f_name} -> {sheet.title}")
+                sys.exit(1)
+
+            # Clean Status column
+            df['Status'] = df['Status'].astype(str).str.strip()
+            df = df[df['Status'] != '']
+            df = df[df['Status'].notna()]
+
+            if not df.empty:
+                df['Source_File'] = f_name 
+                listofFrames.append(df)
+                
+        except Exception as e:
+            print(f"❌ Logic Error in {f_name} -> {sheet.title}: {e}")
             sys.exit(1)
-
-        # Filter: Sirf non-blank Status entries
-        df = df[df['Status'].astype(str).str.strip() != '']
-        df = df[df['Status'].notna()]
-
-        if not df.empty:
-            # File name column add kar rahe hain taaki tracking easy ho
-            df['Source_File'] = f_name 
-            listofFrames.append(df)
 
 # ------------------------
 # 4. Uploading to Master Sheet
@@ -117,25 +128,26 @@ def upload_master(sheet_name, final_df):
     
     print(f"📤 Uploading {len(final_df)} rows to {sheet_name}...")
     ws = call_api(lambda: gc.open_by_key(target_id).worksheet(sheet_name))
+    if not ws: return
     
-    # Header + Data
+    # Header + Data conversion
     values = [final_df.columns.to_list()] + final_df.astype(str).values.tolist()
     
     call_api(lambda: ws.clear())
     time.sleep(5)
+    # Modern gspread update syntax
     call_api(lambda: ws.update(range_name='A1', values=values, value_input_option="USER_ENTERED"))
 
+# --- Execution ---
 if listofFrames:
     master_df = pd.concat(listofFrames, ignore_index=True)
     
-    # Charo master sheets update karna
     upload_master("Total_IDs", master_df)
+    
+    # Status wise filter
     upload_master("Complete_IDs", master_df[master_df["Status"] == "Complete"])
     upload_master("LPE_IDs", master_df[master_df["Status"] == "LPE"])
     
     print("✅ PROCESS COMPLETE!")
 else:
     print("⚠️ No data found to merge.")
-
-
-
