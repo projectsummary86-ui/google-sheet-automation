@@ -28,23 +28,24 @@ listofFrames = []
 # 2. Smart API Call (Handles 429 & 503)
 # ------------------------
 def call_api(func):
-    """Handles API Quota (429) and Server Unavailable (503) errors."""
-    max_retries = 6
+    """Har call ke beech gap aur 429/503 errors ke liye smart retry."""
+    max_retries = 7 # Retries badha diye hain
     for i in range(max_retries):
         try:
-            # 2.0s gap taaki 60 RPM se niche rahein
-            time.sleep(2.0) 
+            # 2.2 seconds ka gap (Safe mode for 60 RPM)
+            time.sleep(2.2) 
             return func()
         except Exception as e:
-            err = str(e)
-            # Agar rate limit (429) ya server down (503) hai
-            if "429" in err or "503" in err:
-                wait = 85 + (i * 30)
-                print(f"⚠️ Server/Quota Issue: {err[:50]}. Waiting {wait}s... (Attempt {i+1}/{max_retries})")
+            err_msg = str(e)
+            # Agar rate limit (429) ya server temporary down (503) hai
+            if "429" in err_msg or "503" in err_msg:
+                # Pehle retry par 90s, phir badhta jayega
+                wait = 90 + (i * 40) 
+                print(f"⚠️ Google Server/Quota Issue ({err_msg[:3]}). Waiting {wait}s... (Attempt {i+1}/{max_retries})")
                 time.sleep(wait)
             else:
-                # Baaki serious errors par crash hone do taaki hum dekh sakein kya hua
-                print(f"❌ Permanent Error: {err}")
+                # Agar koi aur serious error hai, toh report kare
+                print(f"❌ Permanent Error: {e}")
                 raise e
     return None
 
@@ -140,3 +141,4 @@ if listofFrames:
     print("✅ MISSION SUCCESS: All data merged!")
 else:
     print("⚠️ No data found to merge.")
+
