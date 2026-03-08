@@ -1,4 +1,4 @@
-# 🔐 Final Robust Google Sheet Automation Script (A:L Columns Only)
+# 🔐 Strict Google Sheet Merger (Fails on Formatting Errors)
 import os
 import json
 import gspread
@@ -6,132 +6,114 @@ from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 import pandas as pd
 import time
-import random
+import sys
 
 # ------------------------
-# 1. Google Credentials & Initialization
+# 1. Credentials Setup
 # ------------------------
 creds_dict = json.loads(os.environ["GOOGLE_CREDENTIALS"])
 creds = Credentials.from_service_account_info(
     creds_dict,
-    scopes=[
-        "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/drive"
-    ]
+    scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
 )
 gc = gspread.authorize(creds)
 drive_service = build('drive', 'v3', credentials=creds)
 
 # ------------------------
-# 2. Configuration
+# 2. Config
 # ------------------------
 folder_id = '1JpmPfqOFhXCW6H1YnsI6pp07qLMLv3Qo'
 target_spreadsheet_id = '1L9QHbdpc5DZyDzrZhpQaiu4T0tWM1naQ6MO7CJXRC0I'
-
 excluded_sheets = {"Quota", "RnD", "Proxy", "OE", "FIDs", "BRANDS", "Section Sheet", "openEnd"}
+
 listofFrames = []
 
 # ------------------------
-# 3. Helper Functions (Retry + Throttling)
+# 3. Safe Call Logic (Only for API Quota)
 # ------------------------
-def safe_gspread_call(func, retries=5, wait=10):
+def safe_api_call(func, retries=5):
     for attempt in range(retries):
         try:
             return func()
         except Exception as e:
             if "429" in str(e):
-                sleep_time = wait * (2 ** attempt) + random.uniform(1, 5)
-                print(f"⚠️ Quota hit! Sleeping for {round(sleep_time)}s... (Attempt {attempt+1}/{retries})")
-                time.sleep(sleep_time)
+                wait = 45 + (attempt * 15)
+                print(f"⏳ Quota hit, waiting {wait}s...")
+                time.sleep(wait)
             else:
-                print(f"❌ Error: {e}")
-                return None
+                raise e # Baaki errors ke liye crash hone do
     return None
 
 # ------------------------
-# 4. Main Data Extraction Loop
+# 4. Processing Files (Strict Mode)
 # ------------------------
-query = f"'{folder_id}' in parents and mimeType='application/vnd.google-apps.spreadsheet' and trashed = false"
-response = drive_service.files().list(q=query, pageSize=1000).execute()
+response = drive_service.files().list(
+    q=f"'{folder_id}' in parents and mimeType='application/vnd.google-apps.spreadsheet' and trashed = false",
+    pageSize=1000
+).execute()
 files = response.get('files', [])
 
-print(f"🚀 Found {len(files)} files. Starting extraction (Columns A:L)...")
+print(f"🚀 Processing {len(files)} files strictly...")
 
 for idx, file in enumerate(files):
-    print(f"📁 [{idx+1}/{len(files)}] Processing: {file['name']}")
+    f_name = file['name']
+    print(f"📄 [{idx+1}/{len(files)}] Checking: {f_name}")
     
-    spreadsheet = safe_gspread_call(lambda: gc.open_by_key(file['id']))
-    if not spreadsheet: continue
-
-    time.sleep(1.2) # API Pacing
-    worksheets = safe_gspread_call(lambda: spreadsheet.worksheets())
-    if not worksheets: continue
+    spreadsheet = safe_api_call(lambda: gc.open_by_key(file['id']))
+    time.sleep(2)
+    worksheets = safe_api_call(lambda: spreadsheet.worksheets())
 
     for sheet in worksheets:
-        if sheet.title in excluded_sheets:
+        s_name = sheet.title
+        if s_name in excluded_sheets:
             continue
 
-        data = safe_gspread_call(lambda: sheet.get_all_values())
+        data = safe_api_call(lambda: sheet.get_all_values())
+        
+        # Validation 1: Minimum Rows check
         if not data or len(data) < 5:
-            continue
+            # Agar sheet empty hai toh error dekar stop karein
+            print(f"❌ ERROR: Sheet '{s_name}' in File '{f_name}' is empty or has less than 5 rows!")
+            sys.exit(1)
 
-        try:
-            # --- A:L Column Filtering Logic ---
-            # DataFrame banakar sirf pehle 12 columns select karna
-            temp_df = pd.DataFrame(data)
-            temp_df = temp_df.iloc[:, :12] # Keep only first 12 columns (A to L)
+        # A:L Filtering
+        temp_df = pd.DataFrame(data).iloc[:, :12]
+        header = temp_df.iloc[3].to_list()
+        rows = temp_df.iloc[4:]
+        
+        df = pd.DataFrame(rows.values, columns=header)
+        df = df.loc[:, ~df.columns.duplicated()]
 
-            # Header row 4 (index 3) se lena aur 12 columns tak limit karna
-            header = temp_df.iloc[3].to_list() 
-            
-            # Row 5 onwards ka data
-            rows = temp_df.iloc[4:] 
-            
-            # Final Clean DataFrame
-            df = pd.DataFrame(rows.values, columns=header)
-            df = df.loc[:, ~df.columns.duplicated()] # Remove duplicates if any
+        # Validation 2: Status Column check
+        if 'Status' not in df.columns:
+            print(f"❌ FORMAT ERROR: 'Status' column missing in Sheet: '{s_name}', File: '{f_name}'")
+            print(f"Found columns: {header}")
+            sys.exit(1) # Script yahi ruk jayegi
 
-            if 'Status' in df.columns:
-                # Sirf meaningful rows lena
-                df = df[df['Status'].notna() & (df['Status'] != '')]
-                listofFrames.append(df)
-                
-        except Exception as e:
-            print(f"   ⚠️ Skipping sheet '{sheet.title}': {e}")
-    
-    # Delay to respect 60 requests/min limit
-    time.sleep(2)
+        # Filter and Append
+        df = df[df['Status'].notna() & (df['Status'] != '')]
+        if not df.empty:
+            listofFrames.append(df)
+        
+        time.sleep(1.5)
+    time.sleep(4)
 
 # ------------------------
-# 5. Combine and Update Master Sheets
+# 5. Final Upload
 # ------------------------
-def update_master_sheet(sheet_name, dataframe):
-    if dataframe.empty:
-        print(f"ℹ️ No data for {sheet_name}, skipping update.")
-        return
+def final_upload(sheet_name, dataframe):
+    if dataframe.empty: return
+    ws = safe_api_call(lambda: gc.open_by_key(target_spreadsheet_id).worksheet(sheet_name))
+    upload_data = [dataframe.columns.to_list()] + dataframe.astype(str).values.tolist()
     
-    print(f"📤 Updating Master Sheet: {sheet_name}...")
-    ws = safe_gspread_call(lambda: gc.open_by_key(target_spreadsheet_id).worksheet(sheet_name))
-    if not ws: return
-
-    # Format for Google Sheets (List of Lists)
-    final_data = [dataframe.columns.to_list()] + dataframe.astype(str).values.tolist()
-    
-    safe_gspread_call(lambda: ws.clear())
-    time.sleep(2) 
-    safe_gspread_call(lambda: ws.update(range_name='A1', values=final_data, value_input_option="USER_ENTERED"))
+    safe_api_call(lambda: ws.clear())
+    time.sleep(5)
+    safe_api_call(lambda: ws.update(range_name='A1', values=upload_data, value_input_option="USER_ENTERED"))
+    time.sleep(5)
 
 if listofFrames:
-    combined_master = pd.concat(listofFrames, ignore_index=True)
-    
-    update_master_sheet("Total_IDs", combined_master)
-
-    complete_df = combined_master[combined_master["Status"] == "Complete"]
-    update_master_sheet("Complete_IDs", complete_df)
-
-    lpe_df = combined_master[combined_master["Status"] == "LPE"]
-    update_master_sheet("LPE_IDs", lpe_df)
-
-    print("✅ All done! 100+ sheets merged (Columns A:L only).")
-else:
-    print("⚠️ No valid data found in any sheet.")
+    master_df = pd.concat(listofFrames, ignore_index=True)
+    final_upload("Total_IDs", master_df)
+    final_upload("Complete_IDs", master_df[master_df["Status"] == "Complete"])
+    final_upload("LPE_IDs", master_df[master_df["Status"] == "LPE"])
+    print("✅ SUCCESS: All sheets merged perfectly!")
